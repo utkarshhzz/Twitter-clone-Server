@@ -5,18 +5,20 @@ import { expressMiddleware } from '@as-integrations/express5';
 const cors = require('cors');        
 import { prismaClient } from '../clients/db';
 import { User } from './user';
+import { GraphqlContext } from '../interfaces';
+import JWTService from '../services/jwt';
  export async function initServer() {
     const app=express();
     app.use(bodyParser.json());
     app.use(cors());
     
-    const graphqlServer = new ApolloServer({
+    const graphqlServer = new ApolloServer<GraphqlContext>({
         typeDefs: `
         ${User.types}
 
         type Query {
         ${User.queries}
-        sayHello:String
+        sayHello:String 
         sayHelloToMe(name:String!): String
         }
         `,
@@ -29,7 +31,21 @@ import { User } from './user';
 
     });
     await graphqlServer.start();
-    app.use("/graphql",expressMiddleware(graphqlServer));
+    app.use("/graphql",expressMiddleware(graphqlServer,{
+        context:async ({req,res}) => {
+            try {
+                const token = req.headers.authorization?.replace('Bearer ', '');
+                return {
+                    user: token ? JWTService.decodeToken(token) : null
+                }
+            } catch (error) {
+                console.error('Token verification failed:', error);
+                return {
+                    user: null
+                }
+            }
+        }
+    }));
     return app;
 
 }
