@@ -5,6 +5,10 @@ type User {
   lastName: String
   email: String!
   profileImageURL: String
+  name: String
+  username: String
+  image: String
+  tweets:[Tweet]
 }
   
 `;

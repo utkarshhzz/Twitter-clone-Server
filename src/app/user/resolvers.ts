@@ -67,5 +67,24 @@ const queries={
         }
     },
 };
+const extraResolvers = {
+    User: {
+        tweets: async (parent: any) => {
+            return await prismaClient.tweet.findMany({
+                where: { authorId: parent.id },
+                orderBy: { createdAt: 'desc' }
+            });
+        },
+        name: (parent: any) => {
+            return `${parent.firstName} ${parent.lastName || ''}`.trim();
+        },
+        username: (parent: any) => {
+            return parent.email?.split('@')[0] || '';
+        },
+        image: (parent: any) => {
+            return parent.profileImageURL;
+        }
+    }
+};
 
-export const resolvers={queries};
+export const resolvers = { queries, extraResolvers };

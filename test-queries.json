@@ -1,0 +1,15 @@
+{
+  "getAllTweets": {
+    "query": "{ getAllTweets { id content imageURL author { id firstName lastName email profileImageURL name username image } createdAt updatedAt } }"
+  },
+  "createTweetWithoutAuth": {
+    "query": "mutation { createTweet(content: \"Hello World!\") { id content createdAt author { firstName lastName } } }"
+  },
+  "createTweetWithAuth": {
+    "note": "Replace YOUR_JWT_TOKEN with actual token",
+    "headers": {
+      "Authorization": "Bearer YOUR_JWT_TOKEN"
+    },
+    "query": "mutation { createTweet(content: \"Hello World!\", imageURL: \"https://example.com/image.jpg\") { id content imageURL createdAt author { id firstName lastName email name username } } }"
+  }
+}
