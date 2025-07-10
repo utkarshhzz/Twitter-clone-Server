@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { Request, Response } from 'express';
 import bodyParser from 'body-parser';
 import { ApolloServer } from '@apollo/server';
 import { expressMiddleware } from '@as-integrations/express5';
@@ -12,6 +12,9 @@ import JWTService from '../services/jwt';
     const app=express();
     app.use(bodyParser.json());
     app.use(cors());
+    app.get("/", function(req, res) {
+        res.status(200).json({message: 'everything is fine'});
+    });
     
     const graphqlServer = new ApolloServer<GraphqlContext>({
         typeDefs: `        

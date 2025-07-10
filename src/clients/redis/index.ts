@@ -1,6 +1,9 @@
 import Redis from "ioredis"
+import * as dotenv from "dotenv";
 
-export const redisClient = new Redis("redis://default:AYDAAAIjcDFmNzNkYjkyZGQ1ZTQ0NjhmODY2MDU1NWVhYWEwZmRhN3AxMA@cuddly-dodo-32960.upstash.io:6379", {
+dotenv.config();
+
+export const redisClient = new Redis(process.env.REDIS_URL || "", {
   tls: {
     rejectUnauthorized: false
   }
