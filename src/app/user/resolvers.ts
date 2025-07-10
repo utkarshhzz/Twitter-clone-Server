@@ -1,81 +1,109 @@
-import axios from 'axios';
 import { prismaClient } from '../../clients/db';
-import JWTService from '../../services/jwt';
 import { GraphqlContext } from '../../interfaces';
-interface GoogleTokenResult{
-    iss?:string;
-    sub?:string;
-    aud?:string;
-    exp?:number;
-    iat?:number;
-    email?:string;
-    email_verified?:boolean;
-    name?:string;
-    picture?:string;
-    locale?:string;
-    given_name?:string;
-    family_name?:string;
-}
-const queries={
-    verifyGoogleToken:async(parent:any,{token}:{token:string})=>{
-        const googleToken=token;
-        const googleOauthURL=new URL('https://oauth2.googleapis.com/tokeninfo');
-        googleOauthURL.searchParams.set('id_token',googleToken);
-        const{data}=await axios.get<GoogleTokenResult>(googleOauthURL.toString(),{
-            responseType:'json'
-        });
-        const user=await prismaClient.user.findUnique({where:{email:data.email}}) 
-        if(!user)
-        {
-            const nameParts = data.name?.split(' ') || [];
-            await prismaClient.user.create({
-                data:{
-                    firstName: data.given_name || nameParts[0] || '',
-                    lastName: data.family_name || nameParts.slice(1).join(' ') || '',
-                    email:data.email || '',
-                    profileImageURL:data.picture || '',
-                }
-            });
-        }
-        const userInDb=await prismaClient.user.findUnique({where:{email:data.email}});
-        if(!userInDb)
-        {
-            throw new Error("User not found in database");
-        }
-        const userToken = await JWTService.generateTokenForUser(userInDb);
+import UserService from '../../services/user';
+import { User } from '@prisma/client';
+import { redisClient } from '../../clients/redis';
 
-        return userToken;
+const queries = {
+    verifyGoogleToken: async (parent: any, { token }: { token: string }) => {
+        const resultToken = await UserService.verifyGoogleAuthToken(token);
+        return resultToken;
+    },
+    getCurrentUser: async (parent: any, args: any, ctx: GraphqlContext) => {
+        const id = ctx.user?.id;
+        if (!id) return null;
 
+        const user = await UserService.getUserById(id);
+        return user;
     },
-    getCurrentUser:async (parent:any,args:any,ctx:GraphqlContext) => {
-        console.log('getCurrentUser called');
-        console.log('Context user:', ctx.user);
-        
-        const id=ctx.user?.id;
-        if(!id) {
-            console.log('No user ID found in context');
-            return null;
-        }
-        
-        try {
-            const user=await prismaClient.user.findUnique({where:{id}});
-            console.log('Found user:', user);
-            return user;
-        } catch (error) {
-            console.error('Error fetching user:', error);
-            return null;
-        }
-    },
-    getUserById: async (parent:any,{id}:{id:string},ctx:GraphqlContext) =>prismaClient.user.findUnique ({where:{id}}),
+    getUserById: async (parent: any, { id }: { id: string }, ctx: GraphqlContext) => UserService.getUserById(id)
 };
 const extraResolvers = {
     User: {
-        tweets: async (parent: any) => {
-            return await prismaClient.tweet.findMany({
-                where: { authorId: parent.id },
+        tweets: (parent: User) => 
+            prismaClient.tweet.findMany({ 
+                where: { author: { id: parent.id } },
                 orderBy: { createdAt: 'desc' }
+            }),
+        followers: async (parent: User) => {
+            const result = await prismaClient.follows.findMany({
+                where: { following: { id: parent.id } },
+                include: {
+                    follower: true
+                }
             });
+            return result.map((el) => el.follower);
         },
+        following: async (parent: User) => {
+            const result = await prismaClient.follows.findMany({
+                where: { follower: { id: parent.id } },
+                include: {
+                    following: true,
+                }
+            });
+            return result.map((el) => el.following);
+        },
+        recommendedUsers: async (parent: User, _: any, ctx: GraphqlContext) => {
+            if (!ctx.user) return [];
+            
+            // Check cache first
+            try {
+                const cachedValue = await redisClient.get(
+                    `RECOMMENDED_USERS:${ctx.user.id}`
+                );
+
+                if (cachedValue) {
+                    console.log("Cache Found");
+                    return JSON.parse(cachedValue);
+                }
+            } catch (error) {
+                console.error("Redis error:", error);
+                // Continue without cache if Redis fails
+            }
+
+            // Get my followings and their followings
+            const myFollowings = await prismaClient.follows.findMany({
+                where: {
+                    follower: { id: ctx.user.id },
+                },
+                include: {
+                    following: {
+                        include: { followers: { include: { following: true } } },
+                    },
+                },
+            });
+
+            const users: User[] = [];
+
+            // Find recommendations - people that my followings follow, but I don't
+            for (const followings of myFollowings) {
+                for (const followingOfFollowedUser of followings.following.followers) {
+                    if (
+                        followingOfFollowedUser.following.id !== ctx.user.id &&
+                        myFollowings.findIndex(
+                            (e) => e?.followingId === followingOfFollowedUser.following.id
+                        ) < 0
+                    ) {
+                        users.push(followingOfFollowedUser.following);
+                    }
+                }
+            }
+
+            console.log("Cache Not Found");
+            
+            // Store in cache
+            try {
+                await redisClient.set(
+                    `RECOMMENDED_USERS:${ctx.user.id}`,
+                    JSON.stringify(users)
+                );
+            } catch (error) {
+                console.error("Redis set error:", error);
+            }
+
+            return users;
+        },
+
         name: (parent: any) => {
             return `${parent.firstName} ${parent.lastName || ''}`.trim();
         },
@@ -88,4 +116,35 @@ const extraResolvers = {
     }
 };
 
-export const resolvers = { queries, extraResolvers };
+const mutations = {
+    followUser: async (parent: any, { to }: { to: string }, ctx: GraphqlContext) => {
+        if (!ctx.user || !ctx.user.id) {
+            throw new Error('Unauthorized');
+        }
+        await UserService.followUser(ctx.user.id, to);
+        
+        try {
+            await redisClient.del(`RECOMMENDED_USERS:${ctx.user.id}`);
+        } catch (error) {
+            console.error("Redis delete error:", error);
+        }
+        
+        return true;
+    },
+    unfollowUser: async (parent: any, { to }: { to: string }, ctx: GraphqlContext) => {
+        if (!ctx.user || !ctx.user.id) {
+            throw new Error('Unauthorized');
+        }
+        await UserService.unfollowUser(ctx.user.id, to);
+        
+        try {
+            await redisClient.del(`RECOMMENDED_USERS:${ctx.user.id}`);
+        } catch (error) {
+            console.error("Redis delete error:", error);
+        }
+        
+        return true;
+    }
+};
+
+export const resolvers = { queries, extraResolvers, mutations };

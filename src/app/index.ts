@@ -27,6 +27,7 @@ import JWTService from '../services/jwt';
 
         type Mutation {
         ${Tweet.mutations}
+        ${User.mutations}
         }
         `,
         resolvers:{
@@ -37,6 +38,8 @@ import JWTService from '../services/jwt';
             },
             Mutation:{
                 ...Tweet.resolvers.mutations,
+                ...User.resolvers.mutations,
+                
             },
             ...Tweet.resolvers.extraResolvers,
             ...User.resolvers.extraResolvers,

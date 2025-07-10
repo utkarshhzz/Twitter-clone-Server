@@ -9,6 +9,9 @@ type User {
   username: String
   image: String
   tweets:[Tweet]
+  recommendedUsers:[User]
+  followers:[User]
+  following:[User]
 }
   
 `;
